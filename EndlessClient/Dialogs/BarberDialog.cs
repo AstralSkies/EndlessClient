@@ -3,6 +3,8 @@ using EOLib.Graphics;
 using EndlessClient.UIControls;
 using EndlessClient.Rendering.Factories;
 using Microsoft.Xna.Framework;
+using MonoGame.Extended.Input.InputListeners;
+using System;
 using XNAControls;
 using EOLib.Domain.Character;
 using EOLib.Localization;
@@ -10,7 +12,7 @@ using EOLib.Domain.Interact.Barber;
 using EndlessClient.Dialogs.Factories;
 using Optional.Collections;
 using EOLib.IO.Repositories;
-using System;
+using System.Linq;
 using EndlessClient.Audio;
 
 namespace EndlessClient.Dialogs
@@ -29,7 +31,7 @@ namespace EndlessClient.Dialogs
         private readonly IEOMessageBoxFactory _messageBoxFactory;
         private readonly IEIFFileProvider _eifFileProvider;
         private readonly ISfxPlayer _sfxPlayer;
-       
+
         private CharacterRenderProperties RenderProperties => _characterControl.RenderProperties;
         private ListDialogItem _changeHairItem, _changeHairColor, _changeBuyHairStyleOrColor;
 
@@ -74,7 +76,7 @@ namespace EndlessClient.Dialogs
 
         private void InitializeDialogItems(IEODialogButtonService dialogButtonService)
         {
-            var cancel = CreateButton(dialogButtonService, new Vector2(215, 150), SmallButton.Cancel);
+            var cancel = CreateButton(dialogButtonService, new Vector2(215, 151), SmallButton.Cancel);
             cancel.OnClick += (_, _) => Close(XNADialogResult.Cancel);
 
             CreateListItems();
@@ -85,11 +87,6 @@ namespace EndlessClient.Dialogs
             base.Initialize();
             _characterControl.Initialize();
             UpdateListItems(_characterRepository.MainCharacter.RenderProperties);
-        }
-
-        public void Update(GameTime gameTime)
-        {
-            base.Update(gameTime);
         }
 
         private void CreateListItems()
@@ -158,15 +155,6 @@ namespace EndlessClient.Dialogs
 
         private void HairColor(object sender, MonoGame.Extended.Input.InputListeners.MouseEventArgs e)
         {
-            UpdateHairColor();
-        }
-        private void UpdateHighlightWidth(ListDialogItem item)
-        {
-            item.HighlightWidthOverride = 175;
-        }
-        private void UpdateHairColor()
-        {
-            var currentProperties = _characterControl.RenderProperties;
             _characterControl.NextHairColor();
             _changeHairColor.SubText = GetCurrentHairColorText(_characterControl.RenderProperties.HairColor);
         }
@@ -213,5 +201,23 @@ namespace EndlessClient.Dialogs
             var msgBox = _messageBoxFactory.CreateMessageBox(DialogResourceID.WARNING_YOU_HAVE_NOT_ENOUGH, $" {_eifFileProvider.EIFFile[1].Name}");
             msgBox.ShowDialog();
         }
+
+        protected override bool HandleClick(IXNAControl control, MouseEventArgs eventArgs)
+        {
+            var characterBounds = new Rectangle(
+                (int)_characterControl.DrawPositionWithParentOffset.X,
+                (int)_characterControl.DrawPositionWithParentOffset.Y,
+                (int)(_characterControl.DrawArea.Width * 2),
+                (int)_characterControl.DrawArea.Height
+            );
+
+            if (!characterBounds.Contains(eventArgs.Position))
+                return base.HandleClick(control, eventArgs);
+
+            _characterControl.NextDirection();
+
+            return base.HandleClick(control, eventArgs);
+        }
+
     }
 }
