@@ -252,7 +252,7 @@ namespace EndlessClient.Dialogs
             if (_guildBankBalance != _guildSessionProvider.GuildBankBalance)
             {
                 _guildBankBalance = _guildSessionProvider.GuildBankBalance;
-                var message = $"{_localizedStringFinder.GetString(DialogResourceID.GUILD_NEW_BALANCE)}, {_guildBankBalance}";
+                var message = $"{_localizedStringFinder.GetString(DialogResourceID.GUILD_NEW_BALANCE)} {_guildBankBalance}";
        
                 var title = _localizedStringFinder.GetString(DialogResourceID.GUILD_DEPOSIT_NEW_BALANCE);
                 var msgBox = _messageBoxFactory.CreateMessageBox(message, title, EODialogButtons.Ok);

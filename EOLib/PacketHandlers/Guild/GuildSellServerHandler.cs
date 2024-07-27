@@ -19,18 +19,16 @@ namespace EOLib.PacketHandlers.Guild
     public class GuildSellServerHandler : InGameOnlyPacketHandler<GuildSellServerPacket>
     {
         private readonly IGuildSessionRepository _guildSessionRepository;
-        private readonly IEnumerable<IGuildNotifier> _guildNotifiers;
+ 
         public override PacketFamily Family => PacketFamily.Guild;
 
         public override PacketAction Action => PacketAction.Sell;
 
         public GuildSellServerHandler(IPlayerInfoProvider playerInfoProvider,
-                                 IGuildSessionRepository guildSessionRepository,
-                                 IEnumerable<IGuildNotifier> guildNotifiers)
+                                 IGuildSessionRepository guildSessionRepository)
             : base(playerInfoProvider)
         {
             _guildSessionRepository = guildSessionRepository;
-            _guildNotifiers = guildNotifiers;
         }
 
         public override bool HandlePacket(GuildSellServerPacket packet)

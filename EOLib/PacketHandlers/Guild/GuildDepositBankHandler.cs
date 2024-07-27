@@ -19,18 +19,16 @@ namespace EOLib.PacketHandlers.Guild
     {
         private readonly IGuildSessionRepository _guildSessionRepository;
 
-        private readonly IEnumerable<IGuildNotifier> _guildNotifiers;
+       
         public override PacketFamily Family => PacketFamily.Guild;
 
         public override PacketAction Action => PacketAction.Buy;
 
         public GuildDepositBankHandler(IPlayerInfoProvider playerInfoProvider,
-                                 IGuildSessionRepository guildSessionRepository,
-                                 IEnumerable<IGuildNotifier> guildNotifiers)
+                                 IGuildSessionRepository guildSessionRepository)
             : base(playerInfoProvider)
         {
             _guildSessionRepository = guildSessionRepository;
-            _guildNotifiers = guildNotifiers;
         }
 
         public override bool HandlePacket(GuildBuyServerPacket packet)
