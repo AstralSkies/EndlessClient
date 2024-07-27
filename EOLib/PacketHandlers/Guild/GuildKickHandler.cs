@@ -29,7 +29,6 @@ namespace EOLib.PacketHandlers.Guild
 
         public override bool HandlePacket(GuildKickServerPacket packet)
         {
-            // Probably will need to build a notifier.
             return true;
         }
     }

@@ -40,6 +40,26 @@ namespace EOLib.Domain.Interact.Guild
             });
         }
 
+        // Guild Bank Info. Limit this to a 3
+        public void BankInfo(string response)
+        { 
+            _packetSendService.SendPacket(new GuildTakeClientPacket
+            {
+                SessionId = _guildSessionProvider.SessionID,
+                InfoType = GuildInfoType.Bank,
+                GuildTag = response
+            });
+        }
+
+        public void DepositAmount(int amount)
+        {
+            _packetSendService.SendPacket(new GuildBuyClientPacket
+            {
+                SessionId = _guildSessionProvider.SessionID,
+                GoldAmount = amount,
+            });
+        }
+
         public void LeaveGuild()
         {
             _packetSendService.SendPacket(new GuildRemoveClientPacket
@@ -54,5 +74,8 @@ namespace EOLib.Domain.Interact.Guild
         void Lookup(string identity);
         void ViewMembers(string response); 
         void LeaveGuild();
+        void BankInfo(string response);
+
+        void DepositAmount(int amount);
     }
 }

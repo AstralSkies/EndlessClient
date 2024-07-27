@@ -234,7 +234,7 @@ namespace EndlessClient.Dialogs
                         Buttons = ScrollingListDialogButtons.BackCancel;
 
                         AddTextAsListItems(_contentProvider.Fonts[Constants.FontSize09],
-                            insertLineBreaks: true,
+                            insertLineBreaks: false,
                             new List<Action>
                             {
                                 () =>

@@ -28,7 +28,9 @@ namespace EndlessClient.Dialogs.Factories
         private readonly IEOMessageBoxFactory _eoMessageBoxFactory;
         private readonly ISfxPlayer _sfxPlayer;
         private readonly IGuildSessionProvider _guildSessionProvider;
-
+        private readonly ICharacterInventoryProvider _characterInventoryProvider;
+        private readonly IItemTransferDialogFactory _itemTransferDialogFactory;
+        private readonly IEIFFileProvider _eifFileProvider;
 
         public GuildDialogFactory(INativeGraphicsManager nativeGraphicsManager,
                                 IEODialogButtonService dialogButtonService,
@@ -43,7 +45,10 @@ namespace EndlessClient.Dialogs.Factories
                                 ICharacterRepository characterLvRepository,
                                 IEOMessageBoxFactory eoMessageBoxFactory,
                                 ISfxPlayer sfxPlayer,
-                                IGuildSessionProvider guildSessionProvider)
+                                IGuildSessionProvider guildSessionProvider,
+                                ICharacterInventoryProvider characterInventoryProvider,
+                                IItemTransferDialogFactory itemTransferDialogFactory,
+                                IEIFFileProvider eifFileProvider)
         {
             _nativeGraphicsManager = nativeGraphicsManager;
             _dialogButtonService = dialogButtonService;
@@ -59,6 +64,10 @@ namespace EndlessClient.Dialogs.Factories
             _eoMessageBoxFactory = eoMessageBoxFactory;
             _sfxPlayer = sfxPlayer;
             _guildSessionProvider = guildSessionProvider;
+            _characterInventoryProvider = characterInventoryProvider;
+            _itemTransferDialogFactory = itemTransferDialogFactory;
+            _eifFileProvider = eifFileProvider;
+
         }
 
         public GuildDialog Create()
@@ -76,7 +85,10 @@ namespace EndlessClient.Dialogs.Factories
                                  _characterRepository,
                                  _eoMessageBoxFactory,
                                  _sfxPlayer,
-                                 _guildSessionProvider);
+                                 _guildSessionProvider,
+                                 _characterInventoryProvider,
+                                 _itemTransferDialogFactory,
+                                 _eifFileProvider);
         }
     }
 

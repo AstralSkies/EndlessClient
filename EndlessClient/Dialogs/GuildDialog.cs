@@ -15,6 +15,8 @@ using System.Linq;
 using XNAControls;
 using EndlessClient.Audio;
 using Microsoft.Xna.Framework;
+using Optional.Collections;
+using System.Windows.Documents;
 
 namespace EndlessClient.Dialogs
 {
@@ -22,7 +24,7 @@ namespace EndlessClient.Dialogs
     {
         private const int AdjustedDrawAreaOffset = 10;
         private const int MaxGuildTag = 3;
-
+        private bool _balanceUpdateNeeded = false;
         private enum GuildDialogState
         {
             Initial,
@@ -34,10 +36,12 @@ namespace EndlessClient.Dialogs
 
         private enum DialogAction
         {
+            None,
             GuildLookUp,
             MemberList,
             LeaveGuild,
             KickPlayer,
+            DepositFunds,
         }
 
         private readonly INativeGraphicsManager _nativeGraphicsManager;
@@ -55,30 +59,35 @@ namespace EndlessClient.Dialogs
         private readonly ISfxPlayer _sfxPlayer;
         private readonly Stack<GuildDialogState> _stateStack = new Stack<GuildDialogState>();
         private readonly IGuildSessionProvider _guildSessionProvider;
+        private readonly ICharacterInventoryProvider _characterInventoryProvider;
+        private readonly IItemTransferDialogFactory _itemTransferDialogFactory;
+        private readonly IEIFFileProvider _eifFileProvider;
 
         private GuildDialogState _state;
         private DialogAction _currentDialogAction;
 
-        private int _previousMemberCount;
-        private Dictionary<string, (int Rank, string RankName)> _previousMembers;
+        private HashSet<string> _previousMemberHashes;
+        private int _guildBankBalance;
+        private bool _bankInfoRequested = false;
 
-        private bool _forceUpdateMemberList;
-
-
-        public GuildDialog(INativeGraphicsManager nativeGraphicsManager,
-                         IEODialogButtonService dialogButtonService,
-                         IEODialogIconService dialogIconService,
-                         ILocalizedStringFinder localizedStringFinder,
-                         ITextInputDialogFactory textInputDialogFactory,
-                         IGuildActions guildActions,
-                         IContentProvider contentProvider,
-                         ICurrentMapStateProvider currentMapStateProvider,
-                         IENFFileProvider enfFileProvider,
-                         IEOMessageBoxFactory messageBoxFactory,
-                         ICharacterRepository characterRepository,
-                         IEOMessageBoxFactory eoMessageBoxFactory,
-                         ISfxPlayer sfxPlayer,
-                         IGuildSessionProvider guildSessionProvider)
+        public GuildDialog(
+            INativeGraphicsManager nativeGraphicsManager,
+            IEODialogButtonService dialogButtonService,
+            IEODialogIconService dialogIconService,
+            ILocalizedStringFinder localizedStringFinder,
+            ITextInputDialogFactory textInputDialogFactory,
+            IGuildActions guildActions,
+            IContentProvider contentProvider,
+            ICurrentMapStateProvider currentMapStateProvider,
+            IENFFileProvider enfFileProvider,
+            IEOMessageBoxFactory messageBoxFactory,
+            ICharacterRepository characterRepository,
+            IEOMessageBoxFactory eoMessageBoxFactory,
+            ISfxPlayer sfxPlayer,
+            IGuildSessionProvider guildSessionProvider,
+            ICharacterInventoryProvider characterInventoryProvider,
+            IItemTransferDialogFactory itemTransferDialogFactory,
+            IEIFFileProvider eifFileProvider)
             : base(nativeGraphicsManager, dialogButtonService, DialogType.Guild)
         {
             _nativeGraphicsManager = nativeGraphicsManager;
@@ -95,11 +104,13 @@ namespace EndlessClient.Dialogs
             _eoMessageBoxFactory = eoMessageBoxFactory;
             _sfxPlayer = sfxPlayer;
             _guildSessionProvider = guildSessionProvider;
-
+            _guildBankBalance = guildSessionProvider.GuildBankBalance;
+            _characterInventoryProvider = characterInventoryProvider;
+            _itemTransferDialogFactory = itemTransferDialogFactory;
+            _eifFileProvider = eifFileProvider;
             SetState(GuildDialogState.Initial);
 
-            _previousMembers = new Dictionary<string, (int Rank, string RankName)>(_guildSessionProvider.Members);
-
+            _previousMemberHashes = new HashSet<string>(_guildSessionProvider.Members.Select(m => CreateMemberHash(m.Key, m.Value)));
 
             BackAction += (_, _) =>
             {
@@ -112,6 +123,8 @@ namespace EndlessClient.Dialogs
                 {
                     SetState(GuildDialogState.Initial);
                 }
+                _bankInfoRequested = false;
+                _currentDialogAction = DialogAction.None;
             };
 
             Title = _localizedStringFinder.GetString(EOResourceID.GUILD_GUILD_MASTER);
@@ -126,59 +139,69 @@ namespace EndlessClient.Dialogs
             }
 
             _state = newState;
-
             ClearItemList();
 
             switch (_state)
             {
                 case GuildDialogState.Initial:
-                    ListItemType = ListDialogItem.ListItemStyle.Large;
-                    Buttons = ScrollingListDialogButtons.Cancel;
-
-                    var informationItem = CreateListDialogItem(0, DialogIcon.GuildInformation, EOResourceID.GUILD_INFORMATION, EOResourceID.GUILD_LEARN_MORE, () => SetState(GuildDialogState.InformationMenu));
-                    AddItemToList(informationItem, sortList: false);
-
-                    var administrationItem = CreateListDialogItem(1, DialogIcon.GuildAdministration, EOResourceID.GUILD_ADMINISTRATION, EOResourceID.GUILD_JOIN_LEAVE_REGISTER, () => SetState(GuildDialogState.Administration));
-                    AddItemToList(administrationItem, sortList: false);
-
-                    var managementItem = CreateListDialogItem(2, DialogIcon.GuildManagement, EOResourceID.GUILD_MANAGEMENT, EOResourceID.GUILD_MODIFY_RANKING_DISBAND);
-                    AddItemToList(managementItem, sortList: false);
-
-                    var bankAccountItem = CreateListDialogItem(3, DialogIcon.GuildBankAccount, EOResourceID.GUILD_BANK_ACCOUNT, EOResourceID.GUILD_DEPOSIT_TO_GUILD_ACCOUNT, () => SetState(GuildDialogState.GuildBank));
-                    AddItemToList(bankAccountItem, sortList: false);
+                    ConfigureInitialDialog();
                     break;
-
                 case GuildDialogState.InformationMenu:
-                    Buttons = ScrollingListDialogButtons.BackCancel;
-
-                    var guildLookUp = CreateListDialogItem(0, DialogIcon.GuildLookup, EOResourceID.GUILD_JOIN_GUILD, EOResourceID.GUILD_JOIN_AN_EXISTING_GUILD, () => ShowGuildDialog(DialogAction.GuildLookUp));
-                    AddItemToList(guildLookUp, sortList: false);
-
-                    var memberList = CreateListDialogItem(1, DialogIcon.GuildMemberlist, EOResourceID.MEMBERLIST, EOResourceID.VIEW_GUILD_MEMBERS, () => ShowGuildDialog(DialogAction.MemberList));
-                    AddItemToList(memberList, sortList: false);
+                    ConfigureInformationMenu();
                     break;
-
                 case GuildDialogState.Administration:
-                    Buttons = ScrollingListDialogButtons.BackCancel;
-
-                    var guildJoin = CreateListDialogItem(0, DialogIcon.GuildJoin, EOResourceID.GUILD_JOIN_GUILD, EOResourceID.GUILD_JOIN_AN_EXISTING_GUILD, () => ShowGuildDialog(DialogAction.GuildLookUp));
-                    AddItemToList(guildJoin, sortList: false);
-
-                    var leaveGuild = CreateListDialogItem(1, DialogIcon.GuildLeave, EOResourceID.GUILD_LEAVE_GUILD, EOResourceID.GUILD_LEAVE_YOUR_CURRENT_GUILD, () => LeaveGuildDialog());
-                    AddItemToList(leaveGuild, sortList: false);
-
-                    var registerGuild = CreateListDialogItem(2, DialogIcon.GuildRegister, EOResourceID.GUILD_REGISTER_GUILD, EOResourceID.GUILD_CREATE_YOUR_OWN_GUILD);
-                    AddItemToList(registerGuild, sortList: false);
+                    ConfigureAdministrationMenu();
                     break;
-
                 case GuildDialogState.GuildBank:
-                    if (string.IsNullOrEmpty(_characterRepository.MainCharacter.GuildTag))
-                    {
-                        var dlg = _messageBoxFactory.CreateMessageBox(DialogResourceID.GUILD_NOT_IN_GUILD);
-                        dlg.ShowDialog();
-                        SetState(GuildDialogState.Initial);
-                    }
+                    ConfigureGuildBankMenu();
                     break;
+            }
+        }
+
+        private void ConfigureInitialDialog()
+        {
+            ListItemType = ListDialogItem.ListItemStyle.Large;
+            Buttons = ScrollingListDialogButtons.Cancel;
+
+            AddItemToList(CreateListDialogItem(0, DialogIcon.GuildInformation, EOResourceID.GUILD_INFORMATION, EOResourceID.GUILD_LEARN_MORE, () => SetState(GuildDialogState.InformationMenu)), false);
+            AddItemToList(CreateListDialogItem(1, DialogIcon.GuildAdministration, EOResourceID.GUILD_ADMINISTRATION, EOResourceID.GUILD_JOIN_LEAVE_REGISTER, () => SetState(GuildDialogState.Administration)), false);
+            AddItemToList(CreateListDialogItem(2, DialogIcon.GuildManagement, EOResourceID.GUILD_MANAGEMENT, EOResourceID.GUILD_MODIFY_RANKING_DISBAND), false);
+            AddItemToList(CreateListDialogItem(3, DialogIcon.GuildBankAccount, EOResourceID.GUILD_BANK_ACCOUNT, EOResourceID.GUILD_DEPOSIT_TO_GUILD_ACCOUNT, () => SetState(GuildDialogState.GuildBank)), false);
+        }
+
+        private void ConfigureInformationMenu()
+        {
+            Buttons = ScrollingListDialogButtons.BackCancel;
+            AddItemToList(CreateListDialogItem(0, DialogIcon.GuildLookup, EOResourceID.GUILD_JOIN_GUILD, EOResourceID.GUILD_JOIN_AN_EXISTING_GUILD, () => ShowGuildDialog(DialogAction.GuildLookUp)), false);
+            AddItemToList(CreateListDialogItem(1, DialogIcon.GuildMemberlist, EOResourceID.MEMBERLIST, EOResourceID.VIEW_GUILD_MEMBERS, () => ShowGuildDialog(DialogAction.MemberList)), false);
+        }
+
+        private void ConfigureAdministrationMenu()
+        {
+            Buttons = ScrollingListDialogButtons.BackCancel;
+            AddItemToList(CreateListDialogItem(0, DialogIcon.GuildJoin, EOResourceID.GUILD_JOIN_GUILD, EOResourceID.GUILD_JOIN_AN_EXISTING_GUILD, () => ShowGuildDialog(DialogAction.GuildLookUp)), false);
+            AddItemToList(CreateListDialogItem(1, DialogIcon.GuildLeave, EOResourceID.GUILD_LEAVE_GUILD, EOResourceID.GUILD_LEAVE_YOUR_CURRENT_GUILD, () => LeaveGuildDialog()), false);
+            AddItemToList(CreateListDialogItem(2, DialogIcon.GuildRegister, EOResourceID.GUILD_REGISTER_GUILD, EOResourceID.GUILD_CREATE_YOUR_OWN_GUILD), false);
+        }
+
+        private void ConfigureGuildBankMenu()
+        {
+            if (string.IsNullOrEmpty(_characterRepository.MainCharacter.GuildTag))
+            {
+                _messageBoxFactory.CreateMessageBox(DialogResourceID.GUILD_NOT_IN_GUILD).ShowDialog();
+                SetState(GuildDialogState.Initial);
+            }
+            else
+            {
+                
+                _guildActions.BankInfo(_characterRepository.MainCharacter.GuildTag);
+
+                
+                _guildBankBalance = _guildSessionProvider.GuildBankBalance;
+
+                _currentDialogAction = DialogAction.DepositFunds;
+                ShowGuildBankInfo();
+                _bankInfoRequested = true;
             }
         }
 
@@ -205,23 +228,67 @@ namespace EndlessClient.Dialogs
             return item;
         }
 
-        protected override void OnUnconditionalUpdateControl(GameTime gameTime)
+        protected override void OnUpdateControl(GameTime gameTime)
         {
-            if (_state == GuildDialogState.InformationMenu && _currentDialogAction == DialogAction.MemberList)
+            base.OnUpdateControl(gameTime);
+
+            if (_balanceUpdateNeeded)
             {
-                if (HasGuildSessionChanged() || _forceUpdateMemberList)
-                {
-                    UpdateMemberList();
-                    _forceUpdateMemberList = false;
-                }
+                CheckBalanceUpdate();
             }
 
-            base.OnUnconditionalUpdateControl(gameTime);
+            if (_state == GuildDialogState.GuildBank)
+            {
+                HandleGuildBankUpdates();
+            }
+            else if (_currentDialogAction == DialogAction.MemberList)
+            {
+                HandleMemberListUpdates();
+            }
         }
 
-        private bool HasGuildSessionChanged()
+        private void CheckBalanceUpdate()
         {
-            return !_previousMembers.SequenceEqual(_guildSessionProvider.Members);
+            if (_guildBankBalance != _guildSessionProvider.GuildBankBalance)
+            {
+                _guildBankBalance = _guildSessionProvider.GuildBankBalance;
+                var message = $"{_localizedStringFinder.GetString(DialogResourceID.GUILD_NEW_BALANCE)}, {_guildBankBalance}";
+       
+                var title = _localizedStringFinder.GetString(DialogResourceID.GUILD_DEPOSIT_NEW_BALANCE);
+                var msgBox = _messageBoxFactory.CreateMessageBox(message, title, EODialogButtons.Ok);
+                msgBox.DialogClosing += (_, e) =>
+                {
+                    if (e.Result == XNADialogResult.OK)
+                    {
+                        _sfxPlayer.PlaySfx(SoundEffectID.DialogButtonClick);
+                    }
+                };
+
+                msgBox.ShowDialog();
+                SetState(GuildDialogState.Initial);
+                _balanceUpdateNeeded = false;
+            }
+        }
+
+        private void HandleGuildBankUpdates()
+        {
+            if (_bankInfoRequested && _guildBankBalance != _guildSessionProvider.GuildBankBalance)
+            {
+                _guildActions.BankInfo(_characterRepository.MainCharacter.GuildTag);
+                _guildBankBalance = _guildSessionProvider.GuildBankBalance;
+
+                ShowGuildBankInfo();
+            }
+        }
+
+        private void HandleMemberListUpdates()
+        {
+            var currentMemberHashes = new HashSet<string>(_guildSessionProvider.Members.Select(m => CreateMemberHash(m.Key, m.Value)));
+            if (!_previousMemberHashes.SetEquals(currentMemberHashes))
+            {
+                _previousMemberHashes = currentMemberHashes;
+                UpdateMemberList();
+            }
         }
 
         private void HandleDialogAction(string responseText)
@@ -238,7 +305,7 @@ namespace EndlessClient.Dialogs
                     ListItemType = ListDialogItem.ListItemStyle.Small;
                     Buttons = ScrollingListDialogButtons.BackCancel;
                     _guildActions.ViewMembers(responseText);
-                    _forceUpdateMemberList = true;
+                    UpdateMemberList();
                     break;
             }
         }
@@ -246,8 +313,6 @@ namespace EndlessClient.Dialogs
         private void UpdateMemberList()
         {
             ClearItemList();
-
-            var currentMembers = new Dictionary<string, (int Rank, string RankName)>(_guildSessionProvider.Members);
 
             foreach (var member in _guildSessionProvider.Members)
             {
@@ -263,9 +328,8 @@ namespace EndlessClient.Dialogs
 
                 AddItemToList(memberItem, sortList: false);
             }
-
-            _previousMembers = currentMembers;
         }
+
         private void ShowGuildDialog(DialogAction action)
         {
             _currentDialogAction = action;
@@ -277,12 +341,11 @@ namespace EndlessClient.Dialogs
             {
                 if (e.Result == XNADialogResult.OK)
                 {
-                    if (string.IsNullOrWhiteSpace(dlg.ResponseText))
+                    var responseText = dlg.ResponseText?.Trim();
+                    if (!string.IsNullOrWhiteSpace(responseText))
                     {
-                        return;
+                        HandleDialogAction(responseText);
                     }
-
-                    HandleDialogAction(dlg.ResponseText);
                 }
             };
 
@@ -292,7 +355,7 @@ namespace EndlessClient.Dialogs
         private void LeaveGuildDialog()
         {
             ClearItemList();
-            ListItemType = ListDialogItem.ListItemStyle.Small;
+            ListItemType = ListDialogItem.ListItemStyle.Large;
             Buttons = ScrollingListDialogButtons.BackCancel;
 
             var actions = new List<Action>
@@ -314,6 +377,78 @@ namespace EndlessClient.Dialogs
                 _localizedStringFinder.GetString(EOResourceID.GUILD_YOU_ARE_ABOUT_TO_LEAVE_THE_GUILD),
                 _localizedStringFinder.GetString(EOResourceID.GUILD_AFTER_YOU_HAVE_LEFT),
                 _localizedStringFinder.GetString(EOResourceID.GUILD_CLICK_HERE_TO_LEAVE_YOUR_GUILD));
+        }
+
+        private void ShowGuildBankInfo()
+        {
+            ClearItemList();
+            ListItemType = ListDialogItem.ListItemStyle.Large;
+            Buttons = ScrollingListDialogButtons.BackCancel;
+
+            var actions = new List<Action>
+            {
+                () =>
+                {
+                    var characterGold = _characterInventoryProvider.ItemInventory.SingleOrNone(x => x.ItemID == 1);
+                    characterGold.Match(
+                        some: gold =>
+                        {
+                            if (gold.Amount == 0)
+                            {
+                                ShowMessageBox(_localizedStringFinder.GetString(DialogResourceID.BANK_ACCOUNT_UNABLE_TO_DEPOSIT));
+                            }
+                            else if (gold.Amount > 1)
+                            {
+                                ShowItemTransferDialog(gold.Amount);
+                            }
+                        },
+                        none: () =>
+                        {
+                            ShowMessageBox(_localizedStringFinder.GetString(DialogResourceID.BANK_ACCOUNT_UNABLE_TO_DEPOSIT));
+                        });
+                }
+            };
+
+            AddTextAsListItems(
+                _contentProvider.Fonts[Constants.FontSize09],
+                true,
+                actions,
+                $"{_localizedStringFinder.GetString(EOResourceID.GUILD_BANK_STATUS_LABEL)} {_guildBankBalance}",
+                _localizedStringFinder.GetString(EOResourceID.GUILD_BANK_DEPOSIT_ONLY_INFO),
+                _localizedStringFinder.GetString(EOResourceID.GUILD_BANK_USAGE_INFO),
+                _localizedStringFinder.GetString(EOResourceID.GUILD_DEPOSIT_PROMPT));
+        }
+
+        private void ShowItemTransferDialog(int goldAmount)
+        {
+            var dlg = _itemTransferDialogFactory.CreateItemTransferDialog(
+                _eifFileProvider.EIFFile[1].Name,
+                ItemTransferDialog.TransferType.BankTransfer,
+                goldAmount,
+                EOResourceID.DIALOG_TRANSFER_DEPOSIT);
+
+            dlg.DialogClosing += (_, e) =>
+            {
+                if (e.Result == XNADialogResult.OK)
+                {
+                    _guildActions.DepositAmount(dlg.SelectedAmount);
+                    _guildActions.BankInfo(_characterRepository.MainCharacter.GuildTag);
+                    _balanceUpdateNeeded = true;
+                }
+            };
+
+            dlg.ShowDialog();
+        }
+
+        private void ShowMessageBox(string message)
+        {
+            var dlg = _messageBoxFactory.CreateMessageBox(message);
+            dlg.ShowDialog();
+        }
+
+        private string CreateMemberHash(string memberName, (int Rank, string RankName) memberInfo)
+        {
+            return $"{memberName}:{memberInfo.Rank}:{memberInfo.RankName}";
         }
     }
 }
